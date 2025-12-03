@@ -6,8 +6,8 @@ ARG DEBIAN_FRONTEND=noninteractive
 # Globally set pip break-system-packages option to avoid having to specify it every time
 ARG PIP_BREAK_SYSTEM_PACKAGES=1
 
-ARG BASE_IMAGE=debian:12
-ARG SLIM_BASE=debian:12-slim
+ARG BASE_IMAGE=ubuntu:24.04
+ARG SLIM_BASE=ubuntu:24.04
 
 # A hook that allows us to inject commands right after the base images
 ARG BASE_HOOK=
@@ -18,7 +18,7 @@ ARG BASE_HOOK
 
 RUN sh -c "$BASE_HOOK"
 
-FROM --platform=${BUILDPLATFORM} debian:12 AS base_host
+FROM --platform=${BUILDPLATFORM} ubuntu:24.04 AS base_host
 ARG PIP_BREAK_SYSTEM_PACKAGES
 
 FROM ${SLIM_BASE} AS slim-base
@@ -39,28 +39,29 @@ ARG DEBIAN_FRONTEND
 ENV CCACHE_DIR /root/.ccache
 ENV CCACHE_MAXSIZE 2G
 
-RUN --mount=type=bind,source=docker/main/build_nginx.sh,target=/deps/build_nginx.sh \
-    /deps/build_nginx.sh
+COPY docker/main/build_nginx.sh /deps/build_nginx.sh
+RUN /deps/build_nginx.sh
 
 FROM wget AS sqlite-vec
 ARG DEBIAN_FRONTEND
 
 # Build sqlite_vec from source
+# Note: The original --mount=type=bind is replaced by COPY for better caching.
+# Other mounts (--mount=type=tmpfs and --mount=type=cache) are kept.
 COPY docker/main/build_sqlite_vec.sh /deps/build_sqlite_vec.sh
 RUN --mount=type=tmpfs,target=/tmp --mount=type=tmpfs,target=/var/cache/apt \
-    --mount=type=bind,source=docker/main/build_sqlite_vec.sh,target=/deps/build_sqlite_vec.sh \
     --mount=type=cache,target=/root/.ccache \
     /deps/build_sqlite_vec.sh
 
 FROM scratch AS go2rtc
 ARG TARGETARCH
 WORKDIR /rootfs/usr/local/go2rtc/bin
-ADD --link --chmod=755 "https://github.com/AlexxIT/go2rtc/releases/download/v1.9.10/go2rtc_linux_${TARGETARCH}" go2rtc
+ADD --link --chmod=755 "https://github.com/AlexxIT/go2rtc/releases/download/v1.9.12/go2rtc_linux_${TARGETARCH}" go2rtc
 
 FROM wget AS tempio
 ARG TARGETARCH
-RUN --mount=type=bind,source=docker/main/install_tempio.sh,target=/deps/install_tempio.sh \
-    /deps/install_tempio.sh
+COPY docker/main/install_tempio.sh /deps/install_tempio.sh
+RUN /deps/install_tempio.sh
 
 ####
 #
@@ -75,16 +76,22 @@ ARG DEBIAN_FRONTEND
 
 # Install OpenVino Runtime and Dev library
 COPY docker/main/requirements-ov.txt /requirements-ov.txt
-RUN apt-get -qq update \
-    && apt-get -qq install -y wget python3 python3-dev python3-distutils gcc pkg-config libhdf5-dev \
+RUN sed -i 's/archive.ubuntu.com/mirrors.tuna.tsinghua.edu.cn/g' /etc/apt/sources.list.d/ubuntu.sources \
+    && apt-get -qq update \
+    && apt-get -qq install -y --no-install-recommends software-properties-common \
+    && add-apt-repository -y ppa:deadsnakes/ppa \
+    && apt-get -qq update \
+    && apt-get -qq install -y wget python3.11 python3.11-dev python3-setuptools gcc pkg-config libhdf5-dev \
+    && rm -rf /var/lib/apt/lists/* \
+    && update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1 \
     && wget -q https://bootstrap.pypa.io/get-pip.py -O get-pip.py \
     && sed -i 's/args.append("setuptools")/args.append("setuptools==77.0.3")/' get-pip.py \
     && python3 get-pip.py "pip" \
     && pip3 install -r /requirements-ov.txt
 
 # Get OpenVino Model
-RUN --mount=type=bind,source=docker/main/build_ov_model.py,target=/build_ov_model.py \
-    mkdir /models && cd /models \
+COPY docker/main/build_ov_model.py /build_ov_model.py
+RUN mkdir /models && cd /models \
     && wget http://download.tensorflow.org/models/object_detection/ssdlite_mobilenet_v2_coco_2018_05_09.tar.gz \
     && tar -xvf ssdlite_mobilenet_v2_coco_2018_05_09.tar.gz \
     && python3 /build_ov_model.py
@@ -141,8 +148,8 @@ COPY audio-labelmap.txt .
 
 FROM wget AS s6-overlay
 ARG TARGETARCH
-RUN --mount=type=bind,source=docker/main/install_s6_overlay.sh,target=/deps/install_s6_overlay.sh \
-    /deps/install_s6_overlay.sh
+COPY docker/main/install_s6_overlay.sh /deps/install_s6_overlay.sh
+RUN /deps/install_s6_overlay.sh
 
 
 FROM base AS wheels
@@ -151,10 +158,13 @@ ARG TARGETARCH
 ARG DEBUG=false
 
 # Use a separate container to build wheels to prevent build dependencies in final image
-RUN apt-get -qq update \
+RUN sed -i 's/archive.ubuntu.com/mirrors.tuna.tsinghua.edu.cn/g' /etc/apt/sources.list.d/ubuntu.sources \
+    && apt-get -qq update \
+    && apt-get -qq install -y --no-install-recommends software-properties-common \
+    && add-apt-repository -y ppa:deadsnakes/ppa \
+    && apt-get -qq update \
     && apt-get -qq install -y \
     apt-transport-https wget unzip \
-    && apt-get -qq update \
     && apt-get -qq install -y \
     python3.11 \
     python3.11-dev \
@@ -193,8 +203,8 @@ RUN pip3 wheel --wheel-dir=/wheels -r /requirements-wheels.txt && \
     fi
 
 # Install HailoRT & Wheels
-RUN --mount=type=bind,source=docker/main/install_hailort.sh,target=/deps/install_hailort.sh \
-    /deps/install_hailort.sh
+COPY docker/main/install_hailort.sh /deps/install_hailort.sh
+RUN /deps/install_hailort.sh
 
 # Collect deps in a single layer
 FROM scratch AS deps-rootfs
@@ -243,8 +253,8 @@ ENV TF_CPP_MIN_LOG_LEVEL=3
 ENV PATH="/usr/local/go2rtc/bin:/usr/local/tempio/bin:/usr/local/nginx/sbin:${PATH}"
 
 # Install dependencies
-RUN --mount=type=bind,source=docker/main/install_deps.sh,target=/deps/install_deps.sh \
-    /deps/install_deps.sh
+COPY docker/main/install_deps.sh /deps/install_deps.sh
+RUN /deps/install_deps.sh
 
 ENV DEFAULT_FFMPEG_VERSION="7.0"
 ENV INCLUDED_FFMPEG_VERSIONS="${DEFAULT_FFMPEG_VERSION}:5.0"
@@ -254,13 +264,15 @@ RUN wget -q https://bootstrap.pypa.io/get-pip.py -O get-pip.py \
     && python3 get-pip.py "pip"
 
 RUN --mount=type=bind,from=wheels,source=/wheels,target=/deps/wheels \
-    pip3 install -U /deps/wheels/*.whl
+    pip3 install --ignore-installed -U /deps/wheels/*.whl
 
 # Install MemryX runtime (requires libgomp (OpenMP) in the final docker image)
-RUN --mount=type=bind,source=docker/main/install_memryx.sh,target=/deps/install_memryx.sh \
-    bash -c "bash /deps/install_memryx.sh"
+COPY docker/main/install_memryx.sh /deps/install_memryx.sh
+RUN bash -c "bash /deps/install_memryx.sh"
 
 COPY --from=deps-rootfs / /
+
+# Create a simple version file for local builds
 
 RUN ldconfig
 
@@ -304,8 +316,8 @@ RUN apt-get update \
     && apt-get install make -y \
     && rm -rf /var/lib/apt/lists/*
 
-RUN --mount=type=bind,source=./docker/main/requirements-dev.txt,target=/workspace/frigate/requirements-dev.txt \
-    pip3 install -r requirements-dev.txt
+COPY ./docker/main/requirements-dev.txt /workspace/frigate/requirements-dev.txt
+RUN pip3 install -r requirements-dev.txt
 
 HEALTHCHECK NONE
 
@@ -338,3 +350,6 @@ FROM deps AS frigate
 
 WORKDIR /opt/frigate/
 COPY --from=rootfs / /
+
+# Create a simple version file for local builds
+RUN echo 'VERSION = "master"' > /opt/frigate/frigate/version.py

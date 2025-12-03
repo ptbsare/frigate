@@ -8,15 +8,22 @@ SECURE_TOKEN_MODULE_VERSION="1.5"
 SET_MISC_MODULE_VERSION="v0.33"
 NGX_DEVEL_KIT_VERSION="v0.3.3"
 
-source /etc/os-release
+# 启用源码仓库以使用 build-dep
+# 检查 /etc/apt/sources.list.d/ 中是否存在 .sources 文件
+SOURCES_FILE=$(find /etc/apt/sources.list.d/ -name "*.sources" | head -n 1)
 
-if [[ "$VERSION_ID" == "12" ]]; then
-    sed -i '/^Types:/s/deb/& deb-src/' /etc/apt/sources.list.d/debian.sources
+if [ -n "$SOURCES_FILE" ]; then
+    # 对于新的 .sources 格式 (Debian 12+, Ubuntu 23.10+)
+    # 在 "Types: deb" 所在行添加 "deb-src"
+    sed -i '/^Types:/s/deb/& deb-src/' "$SOURCES_FILE"
+elif [ -f /etc/apt/sources.list ]; then
+    # 对于旧的 sources.list 格式，创建一个新文件
+    grep '^deb ' /etc/apt/sources.list | sed 's/^deb /deb-src /' > /etc/apt/sources.list.d/sources-src.list
 else
-    cp /etc/apt/sources.list /etc/apt/sources.list.d/sources-src.list
-    sed -i 's|deb http|deb-src http|g' /etc/apt/sources.list.d/sources-src.list
+    echo "警告: 未找到 APT 软件源文件。" >&2
 fi
 
+sed -i 's/archive.ubuntu.com/mirrors.tuna.tsinghua.edu.cn/g' /etc/apt/sources.list.d/ubuntu.sources
 apt-get update
 apt-get -yqq build-dep nginx
 

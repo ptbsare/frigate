@@ -2,8 +2,17 @@
 
 set -euxo pipefail
 
-apt-get -qq update
+# 更换为国内镜像源以提高稳定性
+sed -i 's/archive.ubuntu.com/mirrors.tuna.tsinghua.edu.cn/g' /etc/apt/sources.list.d/ubuntu.sources
 
+# 1. 先安装 software-properties-common，此时系统默认 python3 (3.12) 仍然是激活的
+apt-get -qq update && apt-get -qq install --no-install-recommends -y software-properties-common
+
+# 2. 使用系统默认 Python (3.12) 来添加所有 PPA
+add-apt-repository -y ppa:deadsnakes/ppa
+add-apt-repository -y ppa:kobuk-team/intel-graphics
+
+# 4. 安装所有依赖，包括 python3.11
 apt-get -qq install --no-install-recommends -y \
     apt-transport-https \
     ca-certificates \
@@ -20,15 +29,15 @@ apt-get -qq install --no-install-recommends -y \
     libgl1 \
     libglib2.0-0 \
     libusb-1.0.0 \
-    python3-h2 \
-    libgomp1  # memryx detector
+    libgomp1
 
+# 5. 在所有 apt 操作完成后，最后切换默认 python 版本
 update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1
 
 mkdir -p -m 600 /root/.gnupg
 
 # install coral runtime
-wget -q -O /tmp/libedgetpu1-max.deb "https://github.com/feranick/libedgetpu/releases/download/16.0TF2.17.1-1/libedgetpu1-max_16.0tf2.17.1-1.bookworm_${TARGETARCH}.deb"
+wget -q -O /tmp/libedgetpu1-max.deb "https://github.com/feranick/libedgetpu/releases/download/16.0TF2.17.1-1/libedgetpu1-max_16.0tf2.17.1-1.ubuntu24.04_${TARGETARCH}.deb"
 unset DEBIAN_FRONTEND
 yes | dpkg -i /tmp/libedgetpu1-max.deb && export DEBIAN_FRONTEND=noninteractive
 rm /tmp/libedgetpu1-max.deb
@@ -71,16 +80,19 @@ fi
 
 # arch specific packages
 if [[ "${TARGETARCH}" == "amd64" ]]; then
-  # Install non-free version of i965 driver
-  sed -i -E "/^Components: main$/s/main/main contrib non-free non-free-firmware/" "/etc/apt/sources.list.d/debian.sources" \
-      && apt-get -qq update \
-      && apt-get install --no-install-recommends --no-install-suggests -y i965-va-driver-shaders \
-      && sed -i -E "/^Components: main contrib non-free non-free-firmware$/s/main contrib non-free non-free-firmware/main/" "/etc/apt/sources.list.d/debian.sources" \
-      && apt-get update
+  # Install non-free version of i965 driver.
+  # 注意：这里的文件名是 ubuntu.sources，而不是 debian.sources
+  sed -i -E "/^Components: main$/s/main/main contrib non-free non-free-firmware/" "/etc/apt/sources.list.d/ubuntu.sources"
 
+  # 3. 在添加完所有源和 PPA 之后，执行一次总的 apt-get update
+  apt-get -qq update
+
+  apt-get install --no-install-recommends --no-install-suggests -y i965-va-driver-shaders \
+      && sed -i -E "/^Components: main contrib non-free non-free-firmware$/s/main contrib non-free non-free-firmware/main/" "/etc/apt/sources.list.d/ubuntu.sources"
+  
     # install amd / intel-i965 driver packages
     apt-get -qq install --no-install-recommends --no-install-suggests -y \
-        intel-gpu-tools onevpl-tools \
+        intel-gpu-tools \
         libva-drm2 \
         mesa-va-drivers radeontop
 
@@ -88,43 +100,60 @@ if [[ "${TARGETARCH}" == "amd64" ]]; then
     apt-get install -y dpkg
 
     # use intel apt intel packages
-    wget -qO - https://repositories.intel.com/gpu/intel-graphics.key | gpg --yes --dearmor --output /usr/share/keyrings/intel-graphics.gpg
-    echo "deb [arch=amd64 signed-by=/usr/share/keyrings/intel-graphics.gpg] https://repositories.intel.com/gpu/ubuntu jammy client" | tee /etc/apt/sources.list.d/intel-gpu-jammy.list
-    apt-get -qq update
-    apt-get -qq install --no-install-recommends --no-install-suggests -y \
-        intel-media-va-driver-non-free libmfx1 libmfxgen1 libvpl2
+    #wget -qO - https://repositories.intel.com/gpu/intel-graphics.key | gpg --yes --dearmor --output /usr/share/keyrings/intel-graphics.gpg
+    #echo "deb [arch=amd64 signed-by=/usr/share/keyrings/intel-graphics.gpg] https://repositories.intel.com/gpu/ubuntu jammy client" | tee /etc/apt/sources.list.d/intel-gpu-jammy.list
+    #apt-get -qq update
+    #apt-get -qq install --no-install-recommends --no-install-suggests -y \
+    #    intel-media-va-driver-non-free libmfx1 libmfxgen1 libvpl2
+
+    #apt-get install -y libze-intel-gpu1 libze1 intel-metrics-discovery intel-opencl-icd clinfo intel-gsc
+    apt-get install -y intel-media-va-driver-non-free libmfx1 libmfx-gen1 libvpl2 libvpl-tools libva-glx2 va-driver-all vainfo
+    #apt-get install -y libze-dev intel-ocloc
+    #apt-get install -y libze-intel-gpu-raytracing
 
     apt-get -qq install -y ocl-icd-libopencl1
 
     # install libtbb12 for NPU support
     apt-get -qq install -y libtbb12
 
-    rm -f /usr/share/keyrings/intel-graphics.gpg
-    rm -f /etc/apt/sources.list.d/intel-gpu-jammy.list
+    #rm -f /usr/share/keyrings/intel-graphics.gpg
+    #rm -f /etc/apt/sources.list.d/intel-gpu-jammy.list
 
     # install legacy and standard intel icd and level-zero-gpu
     # see https://github.com/intel/compute-runtime/blob/master/LEGACY_PLATFORMS.md for more info
     # needed core package
-    wget https://github.com/intel/compute-runtime/releases/download/24.52.32224.5/libigdgmm12_22.5.5_amd64.deb
-    dpkg -i libigdgmm12_22.5.5_amd64.deb
-    rm libigdgmm12_22.5.5_amd64.deb
+    #wget https://github.com/intel/compute-runtime/releases/download/24.52.32224.5/libigdgmm12_22.5.5_amd64.deb
+    #dpkg -i libigdgmm12_22.5.5_amd64.deb
+    #rm libigdgmm12_22.5.5_amd64.deb
 
     # legacy packages
-    wget https://github.com/intel/compute-runtime/releases/download/24.35.30872.36/intel-opencl-icd-legacy1_24.35.30872.36_amd64.deb
-    wget https://github.com/intel/compute-runtime/releases/download/24.35.30872.36/intel-level-zero-gpu-legacy1_1.5.30872.36_amd64.deb
-    wget https://github.com/intel/intel-graphics-compiler/releases/download/igc-1.0.17537.24/intel-igc-opencl_1.0.17537.24_amd64.deb
-    wget https://github.com/intel/intel-graphics-compiler/releases/download/igc-1.0.17537.24/intel-igc-core_1.0.17537.24_amd64.deb
+    #wget https://github.com/intel/compute-runtime/releases/download/24.35.30872.36/intel-opencl-icd-legacy1_24.35.30872.36_amd64.deb
+    #wget https://github.com/intel/compute-runtime/releases/download/24.35.30872.36/intel-level-zero-gpu-legacy1_1.5.30872.36_amd64.deb
+    #wget https://github.com/intel/intel-graphics-compiler/releases/download/igc-1.0.17537.24/intel-igc-opencl_1.0.17537.24_amd64.deb
+    #wget https://github.com/intel/intel-graphics-compiler/releases/download/igc-1.0.17537.24/intel-igc-core_1.0.17537.24_amd64.deb
     # standard packages
-    wget https://github.com/intel/compute-runtime/releases/download/24.52.32224.5/intel-opencl-icd_24.52.32224.5_amd64.deb
-    wget https://github.com/intel/compute-runtime/releases/download/24.52.32224.5/intel-level-zero-gpu_1.6.32224.5_amd64.deb
-    wget https://github.com/intel/intel-graphics-compiler/releases/download/v2.5.6/intel-igc-opencl-2_2.5.6+18417_amd64.deb
-    wget https://github.com/intel/intel-graphics-compiler/releases/download/v2.5.6/intel-igc-core-2_2.5.6+18417_amd64.deb
+    #wget https://github.com/intel/compute-runtime/releases/download/24.52.32224.5/intel-opencl-icd_24.52.32224.5_amd64.deb
+    #wget https://github.com/intel/compute-runtime/releases/download/24.52.32224.5/intel-level-zero-gpu_1.6.32224.5_amd64.deb
+    #wget https://github.com/intel/intel-graphics-compiler/releases/download/v2.5.6/intel-igc-opencl-2_2.5.6+18417_amd64.deb
+    #wget https://github.com/intel/intel-graphics-compiler/releases/download/v2.5.6/intel-igc-core-2_2.5.6+18417_amd64.deb
     # npu packages
-    wget https://github.com/oneapi-src/level-zero/releases/download/v1.21.9/level-zero_1.21.9+u22.04_amd64.deb
-    wget https://github.com/intel/linux-npu-driver/releases/download/v1.17.0/intel-driver-compiler-npu_1.17.0.20250508-14912879441_ubuntu22.04_amd64.deb
-    wget https://github.com/intel/linux-npu-driver/releases/download/v1.17.0/intel-fw-npu_1.17.0.20250508-14912879441_ubuntu22.04_amd64.deb
-    wget https://github.com/intel/linux-npu-driver/releases/download/v1.17.0/intel-level-zero-npu_1.17.0.20250508-14912879441_ubuntu22.04_amd64.deb
+    #wget https://github.com/oneapi-src/level-zero/releases/download/v1.21.9/level-zero_1.21.9+u22.04_amd64.deb
+    #wget https://github.com/intel/linux-npu-driver/releases/download/v1.17.0/intel-driver-compiler-npu_1.17.0.20250508-14912879441_ubuntu22.04_amd64.deb
+    #wget https://github.com/intel/linux-npu-driver/releases/download/v1.17.0/intel-fw-npu_1.17.0.20250508-14912879441_ubuntu22.04_amd64.deb
+    #wget https://github.com/intel/linux-npu-driver/releases/download/v1.17.0/intel-level-zero-npu_1.17.0.20250508-14912879441_ubuntu22.04_amd64.deb
+    wget https://github.com/intel/intel-graphics-compiler/releases/download/v2.22.2/intel-igc-core-2_2.22.2+20121_amd64.deb
+    wget https://github.com/intel/intel-graphics-compiler/releases/download/v2.22.2/intel-igc-opencl-2_2.22.2+20121_amd64.deb
+    wget https://github.com/intel/compute-runtime/releases/download/25.44.36015.5/intel-ocloc-dbgsym_25.44.36015.5-0_amd64.ddeb
+    wget https://github.com/intel/compute-runtime/releases/download/25.44.36015.5/intel-ocloc_25.44.36015.5-0_amd64.deb
+    wget https://github.com/intel/compute-runtime/releases/download/25.44.36015.5/intel-opencl-icd-dbgsym_25.44.36015.5-0_amd64.ddeb
+    wget https://github.com/intel/compute-runtime/releases/download/25.44.36015.5/intel-opencl-icd_25.44.36015.5-0_amd64.deb
+    wget https://github.com/intel/compute-runtime/releases/download/25.44.36015.5/libigdgmm12_22.8.2_amd64.deb
+    wget https://github.com/intel/compute-runtime/releases/download/25.44.36015.5/libze-intel-gpu1-dbgsym_25.44.36015.5-0_amd64.ddeb
+    wget https://github.com/intel/compute-runtime/releases/download/25.44.36015.5/libze-intel-gpu1_25.44.36015.5-0_amd64.deb
 
+    wget https://github.com/oneapi-src/level-zero/releases/download/v1.24.2/level-zero_1.24.2+u24.04_amd64.deb
+
+    wget https://github.com/intel/linux-npu-driver/releases/download/v1.26.0/linux-npu-driver-v1.26.0.20251125-19665715237-ubuntu2404.tar.gz && tar -xf linux-npu-driver-v1.26.0.20251125-19665715237-ubuntu2404.tar.gz
     dpkg -i *.deb
     rm *.deb
 fi
