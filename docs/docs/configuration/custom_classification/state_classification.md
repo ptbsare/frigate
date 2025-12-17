@@ -60,13 +60,44 @@ Choose one or more cameras and draw a rectangle over the area of interest for ea
 
 ### Step 3: Assign Training Examples
 
-The system will automatically generate example images from your camera feeds. You'll be guided through each class one at a time to select which images represent that state.
+The system will automatically generate example images from your camera feeds. You'll be guided through each class one at a time to select which images represent that state. It's not strictly required to select all images you see. If a state is missing from the samples, you can train it from the Recent tab later.
 
-**Important**: All images must be assigned to a state before training can begin. This includes images that may not be optimal, such as when people temporarily block the view, sun glare is present, or other distractions occur. Assign these images to the state that is actually present (based on what you know the state to be), not based on the distraction. This training helps the model correctly identify the state even when such conditions occur during inference.
-
-Once all images are assigned, training will begin automatically.
+Once some images are assigned, training will begin automatically.
 
 ### Improving the Model
 
 - **Problem framing**: Keep classes visually distinct and state-focused (e.g., `open`, `closed`, `unknown`). Avoid combining object identity with state in a single model unless necessary.
-- **Data collection**: Use the model’s Recent Classifications tab to gather balanced examples across times of day and weather.
+- **Data collection**: Use the model's Recent Classifications tab to gather balanced examples across times of day and weather.
+- **When to train**: Focus on cases where the model is entirely incorrect or flips between states when it should not. There's no need to train additional images when the model is already working consistently.
+- **Selecting training images**: Images scoring below 100% due to new conditions (e.g., first snow of the year, seasonal changes) or variations (e.g., objects temporarily in view, insects at night) are good candidates for training, as they represent scenarios different from the default state. Training these lower-scoring images that differ from existing training data helps prevent overfitting. Avoid training large quantities of images that look very similar, especially if they already score 100% as this can lead to overfitting.
+
+## Debugging Classification Models
+
+To troubleshoot issues with state classification models, enable debug logging to see detailed information about classification attempts, scores, and state verification.
+
+Enable debug logs for classification models by adding `frigate.data_processing.real_time.custom_classification: debug` to your `logger` configuration. These logs are verbose, so only keep this enabled when necessary. Restart Frigate after this change.
+
+```yaml
+logger:
+  default: info
+  logs:
+    frigate.data_processing.real_time.custom_classification: debug
+```
+
+The debug logs will show:
+
+- Classification probabilities for each attempt
+- Whether scores meet the threshold requirement
+- State verification progress (consecutive detections needed)
+- When state changes are published
+
+### Recent Classifications
+
+For state classification, images are only added to recent classifications under specific circumstances:
+
+- **First detection**: The first classification attempt for a camera is always saved
+- **State changes**: Images are saved when the detected state differs from the current verified state
+- **Pending verification**: Images are saved when there's a pending state change being verified (requires 3 consecutive identical states)
+- **Low confidence**: Images with scores below 100% are saved even if the state matches the current state (useful for training)
+
+Images are **not** saved when the state is stable (detected state matches current state) **and** the score is 100%. This prevents unnecessary storage of redundant high-confidence classifications.

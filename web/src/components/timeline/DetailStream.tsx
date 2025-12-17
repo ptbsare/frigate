@@ -316,7 +316,7 @@ function ReviewGroup({
     date_style: "medium",
   });
 
-  const shouldFetchEvents = review?.data?.detections?.length > 0;
+  const shouldFetchEvents = open && review?.data?.detections?.length > 0;
 
   const { data: fetchedEvents, isValidating } = useSWR<Event[]>(
     shouldFetchEvents
@@ -345,9 +345,9 @@ function ReviewGroup({
   }
 
   const reviewInfo = useMemo(() => {
-    const objectCount = fetchedEvents
-      ? fetchedEvents.length
-      : (review.data.objects ?? []).length;
+    const detectionsCount =
+      review.data?.detections?.length ?? (review.data?.objects ?? []).length;
+    const objectCount = fetchedEvents ? fetchedEvents.length : detectionsCount;
 
     return `${t("detail.trackedObject", { count: objectCount })}`;
   }, [review, t, fetchedEvents]);

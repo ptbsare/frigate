@@ -141,7 +141,37 @@ export default function Step3ChooseExamples({
       );
       await Promise.all(categorizePromises);
 
-      // Step 2.5: Create empty folders for classes that don't have any images
+      // Step 2.5: Delete any unselected images from train folder
+      // For state models, all images must be classified, so unselected images should be removed
+      // For object models, unselected images are assigned to "none" so they're already categorized
+      if (step1Data.modelType === "state") {
+        try {
+          // Fetch current train images to see what's left after categorization
+          const trainImagesResponse = await axios.get<string[]>(
+            `/classification/${step1Data.modelName}/train`,
+          );
+          const remainingTrainImages = trainImagesResponse.data || [];
+
+          const categorizedImageNames = new Set(Object.keys(classifications));
+          const unselectedImages = remainingTrainImages.filter(
+            (imageName) => !categorizedImageNames.has(imageName),
+          );
+
+          if (unselectedImages.length > 0) {
+            await axios.post(
+              `/classification/${step1Data.modelName}/train/delete`,
+              {
+                ids: unselectedImages,
+              },
+            );
+          }
+        } catch (error) {
+          // Silently fail - unselected images will remain but won't cause issues
+          // since the frontend filters out images that don't match expected format
+        }
+      }
+
+      // Step 2.6: Create empty folders for classes that don't have any images
       // This ensures all classes are available in the dataset view later
       const classesWithImages = new Set(
         Object.values(classifications).filter((c) => c && c !== "none"),
@@ -407,30 +437,6 @@ export default function Step3ChooseExamples({
     return allClasses.every((className) => statesWithExamples.has(className));
   }, [step1Data.modelType, allClasses, statesWithExamples]);
 
-  // For state models on the last class, require all images to be classified
-  // But allow proceeding even if not all states have examples (with warning)
-  const canProceed = useMemo(() => {
-    if (step1Data.modelType === "state" && isLastClass) {
-      // Check if all 24 images will be classified after current selections are applied
-      const totalImages = unknownImages.slice(0, 24).length;
-
-      // Count images that will be classified (either already classified or currently selected)
-      const allImages = unknownImages.slice(0, 24);
-      const willBeClassified = allImages.filter((img) => {
-        return imageClassifications[img] || selectedImages.has(img);
-      }).length;
-
-      return willBeClassified >= totalImages;
-    }
-    return true;
-  }, [
-    step1Data.modelType,
-    isLastClass,
-    unknownImages,
-    imageClassifications,
-    selectedImages,
-  ]);
-
   const hasUnclassifiedImages = useMemo(() => {
     if (!unknownImages) return false;
     const allImages = unknownImages.slice(0, 24);
@@ -594,9 +600,7 @@ export default function Step3ChooseExamples({
             }
             variant="select"
             className="flex items-center justify-center gap-2 sm:flex-1"
-            disabled={
-              !hasGenerated || isGenerating || isProcessing || !canProceed
-            }
+            disabled={!hasGenerated || isGenerating || isProcessing}
           >
             {isProcessing && <ActivityIndicator className="size-4" />}
             {t("button.continue", { ns: "common" })}

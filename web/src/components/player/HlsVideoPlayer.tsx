@@ -5,7 +5,7 @@ import {
   useRef,
   useState,
 } from "react";
-import Hls from "hls.js";
+import Hls, { HlsConfig } from "hls.js";
 import { isDesktop, isMobile } from "react-device-detect";
 import { TransformComponent, TransformWrapper } from "react-zoom-pan-pinch";
 import VideoControls from "./VideoControls";
@@ -170,11 +170,14 @@ export default function HlsVideoPlayer({
       return;
     }
 
-    hlsRef.current = new Hls({
+    // Base HLS configuration
+    const hlsConfig: Partial<HlsConfig> = {
       maxBufferLength: 10,
       maxBufferSize: 20 * 1000 * 1000,
       startPosition: currentSource.startPosition,
-    });
+    };
+
+    hlsRef.current = new Hls(hlsConfig);
     hlsRef.current.attachMedia(videoRef.current);
     hlsRef.current.loadSource(currentSource.playlist);
     videoRef.current.playbackRate = currentPlaybackRate;

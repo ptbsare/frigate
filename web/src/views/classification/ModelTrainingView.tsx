@@ -84,6 +84,12 @@ export default function ModelTrainingView({ model }: ModelTrainingViewProps) {
   const [page, setPage] = useState<string>("train");
   const [pageToggle, setPageToggle] = useOptimisticState(page, setPage, 100);
 
+  // title
+
+  useEffect(() => {
+    document.title = `${model.name} - ${t("documentTitle")}`;
+  }, [model.name, t]);
+
   // model state
 
   const [wasTraining, setWasTraining] = useState(false);
@@ -415,8 +421,13 @@ export default function ModelTrainingView({ model }: ModelTrainingViewProps) {
               isMobileOnly && "justify-between",
             )}
           >
-            <div className="flex w-48 items-center justify-center text-sm text-muted-foreground">
-              <div className="p-1">{`${selectedImages.length} selected`}</div>
+            <div className="flex w-auto items-center justify-center text-sm text-muted-foreground md:w-auto">
+              <div className="p-1">
+                {t("selected", {
+                  ns: "views/events",
+                  count: selectedImages.length,
+                })}
+              </div>
               <div className="p-1">{"|"}</div>
               <div
                 className="cursor-pointer p-2 text-primary hover:rounded-lg hover:bg-secondary"
@@ -424,6 +435,26 @@ export default function ModelTrainingView({ model }: ModelTrainingViewProps) {
               >
                 {t("button.unselect", { ns: "common" })}
               </div>
+              {selectedImages.length <
+                (pageToggle === "train"
+                  ? trainImages?.length || 0
+                  : dataset?.[pageToggle]?.length || 0) && (
+                <>
+                  <div className="p-1">{"|"}</div>
+                  <div
+                    className="cursor-pointer p-2 text-primary hover:rounded-lg hover:bg-secondary"
+                    onClick={() =>
+                      setSelectedImages([
+                        ...(pageToggle === "train"
+                          ? trainImages || []
+                          : dataset?.[pageToggle] || []),
+                      ])
+                    }
+                  >
+                    {t("select_all", { ns: "views/events" })}
+                  </div>
+                </>
+              )}
             </div>
             <Button
               className="flex gap-2"
@@ -676,7 +707,7 @@ function LibrarySelector({
                 className="flex-grow cursor-pointer capitalize"
                 onClick={() => setPageToggle(id)}
               >
-                {id.replaceAll("_", " ")}
+                {id === "none" ? t("none") : id.replaceAll("_", " ")}
                 <span className="ml-2 text-muted-foreground">
                   ({dataset?.[id].length})
                 </span>
@@ -835,6 +866,12 @@ function TrainGrid({
           };
         })
         .filter((data) => {
+          // Ignore images that don't match the expected format (event-camera-timestamp-state-score.webp)
+          // Expected format has 5 parts when split by "-", and score should be a valid number
+          if (data.score === undefined || isNaN(data.score) || !data.name) {
+            return false;
+          }
+
           if (!trainFilter) {
             return true;
           }
