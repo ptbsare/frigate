@@ -143,17 +143,6 @@ def require_admin_by_default():
     return admin_checker
 
 
-def _is_authenticated(request: Request) -> bool:
-    """
-    Helper to determine if a request is from an authenticated user.
-
-    Returns True if the request has a valid authenticated user (not anonymous).
-    Port 5000 internal requests are considered anonymous despite having admin role.
-    """
-    username = request.headers.get("remote-user")
-    return username is not None and username != "anonymous"
-
-
 def allow_public():
     """
     Override dependency to allow unauthenticated access to an endpoint.
@@ -173,27 +162,24 @@ def allow_public():
 
 def allow_any_authenticated():
     """
-    Override dependency to allow any authenticated user (bypass admin requirement).
+    Override dependency to allow any request that passed through the /auth endpoint.
 
     Allows:
-    - Port 5000 internal requests (have admin role despite anonymous user)
-    - Any authenticated user with a real username (not "anonymous")
+    - Port 5000 internal requests (remote-user: "anonymous", remote-role: "admin")
+    - Authenticated users with JWT tokens (remote-user: username)
+    - Unauthenticated requests when auth is disabled (remote-user: "viewer")
 
     Rejects:
-    - Port 8971 requests with anonymous user (auth disabled, no proxy auth)
+    - Requests with no remote-user header (did not pass through /auth endpoint)
 
     Example:
         @router.get("/authenticated-endpoint", dependencies=[Depends(allow_any_authenticated())])
     """
 
     async def auth_checker(request: Request):
-        # Port 5000 requests have admin role and should be allowed
-        role = request.headers.get("remote-role")
-        if role == "admin":
-            return
-
-        # Otherwise require a real authenticated user (not anonymous)
-        if not _is_authenticated(request):
+        # Ensure a remote-user has been set by the /auth endpoint
+        username = request.headers.get("remote-user")
+        if username is None:
             raise HTTPException(status_code=401, detail="Authentication required")
         return
 
@@ -564,7 +550,7 @@ def resolve_role(
             "description": "Authentication Accepted (no response body)",
             "headers": {
                 "remote-user": {
-                    "description": 'Authenticated username or "anonymous" in proxy-only mode',
+                    "description": 'Authenticated username or "viewer" in proxy-only mode',
                     "schema": {"type": "string"},
                 },
                 "remote-role": {
@@ -606,12 +592,12 @@ def auth(request: Request):
     # if auth is disabled, just apply the proxy header map and return success
     if not auth_config.enabled:
         # pass the user header value from the upstream proxy if a mapping is specified
-        # or use anonymous if none are specified
+        # or use viewer if none are specified
         user_header = proxy_config.header_map.user
         success_response.headers["remote-user"] = (
-            request.headers.get(user_header, default="anonymous")
+            request.headers.get(user_header, default="viewer")
             if user_header
-            else "anonymous"
+            else "viewer"
         )
 
         # parse header and resolve a valid role
@@ -726,7 +712,7 @@ def auth(request: Request):
     description="Returns the current authenticated user's profile including username, role, and allowed cameras. This endpoint requires authentication and returns information about the user's permissions.",
 )
 def profile(request: Request):
-    username = request.headers.get("remote-user", "anonymous")
+    username = request.headers.get("remote-user", "viewer")
     role = request.headers.get("remote-role", "viewer")
 
     all_camera_names = set(request.app.frigate_config.cameras.keys())

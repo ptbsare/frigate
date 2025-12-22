@@ -45,6 +45,12 @@ export default function Step3ChooseExamples({
   const [isProcessing, setIsProcessing] = useState(false);
   const [currentClassIndex, setCurrentClassIndex] = useState(0);
   const [selectedImages, setSelectedImages] = useState<Set<string>>(new Set());
+  const [cacheKey, setCacheKey] = useState<number>(Date.now());
+  const [loadedImages, setLoadedImages] = useState<Set<string>>(new Set());
+
+  const handleImageLoad = useCallback((imageName: string) => {
+    setLoadedImages((prev) => new Set(prev).add(imageName));
+  }, []);
 
   const { data: trainImages, mutate: refreshTrainImages } = useSWR<string[]>(
     hasGenerated ? `classification/${step1Data.modelName}/train` : null,
@@ -186,15 +192,17 @@ export default function Step3ChooseExamples({
       await Promise.all(emptyFolderPromises);
 
       // Step 3: Determine if we should train
-      // For state models, we need ALL states to have examples
-      // For object models, we need at least 2 classes with images
+      // For state models, we need ALL states to have examples (at least 2 states)
+      // For object models, we need at least 1 class with images (the rest go to "none")
       const allStatesHaveExamplesForTraining =
         step1Data.modelType !== "state" ||
         step1Data.classes.every((className) =>
           classesWithImages.has(className),
         );
       const shouldTrain =
-        allStatesHaveExamplesForTraining && classesWithImages.size >= 2;
+        step1Data.modelType === "object"
+          ? classesWithImages.size >= 1
+          : allStatesHaveExamplesForTraining && classesWithImages.size >= 2;
 
       // Step 4: Kick off training only if we have enough classes with images
       if (shouldTrain) {
@@ -330,6 +338,8 @@ export default function Step3ChooseExamples({
       setHasGenerated(true);
       toast.success(t("wizard.step3.generateSuccess"));
 
+      // Update cache key to force image reload
+      setCacheKey(Date.now());
       await refreshTrainImages();
     } catch (error) {
       const axiosError = error as {
@@ -563,10 +573,16 @@ export default function Step3ChooseExamples({
                       )}
                       onClick={() => toggleImageSelection(imageName)}
                     >
+                      {!loadedImages.has(imageName) && (
+                        <div className="flex h-full items-center justify-center">
+                          <ActivityIndicator className="size-6" />
+                        </div>
+                      )}
                       <img
-                        src={`${baseUrl}clips/${step1Data.modelName}/train/${imageName}`}
+                        src={`${baseUrl}clips/${step1Data.modelName}/train/${imageName}?t=${cacheKey}`}
                         alt={`Example ${index + 1}`}
                         className="h-full w-full object-cover"
+                        onLoad={() => handleImageLoad(imageName)}
                       />
                     </div>
                   );

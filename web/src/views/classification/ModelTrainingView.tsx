@@ -62,6 +62,7 @@ import useApiFilter from "@/hooks/use-api-filter";
 import {
   ClassificationDatasetResponse,
   ClassificationItemData,
+  ClassifiedEvent,
   TrainFilter,
 } from "@/types/classification";
 import {
@@ -707,7 +708,7 @@ function LibrarySelector({
                 className="flex-grow cursor-pointer capitalize"
                 onClick={() => setPageToggle(id)}
               >
-                {id === "none" ? t("none") : id.replaceAll("_", " ")}
+                {id === "none" ? t("details.none") : id.replaceAll("_", " ")}
                 <span className="ml-2 text-muted-foreground">
                   ({dataset?.[id].length})
                 </span>
@@ -803,6 +804,7 @@ function DatasetGrid({
               name: "",
             }}
             showArea={false}
+            clickable={selectedImages.length > 0}
             selected={selectedImages.includes(image)}
             i18nLibrary="views/classificationModel"
             onClick={(data, _) => onClickImages([data.filename], true)}
@@ -961,6 +963,7 @@ function StateTrainGrid({
             data={data}
             threshold={threshold}
             selected={selectedImages.includes(data.filename)}
+            clickable={selectedImages.length > 0}
             i18nLibrary="views/classificationModel"
             showArea={false}
             onClick={(data, meta) => onClickImages([data.filename], meta)}
@@ -1033,6 +1036,45 @@ function ObjectTrainGrid({
     };
   }, [model]);
 
+  // Helper function to create ClassifiedEvent from Event
+  const createClassifiedEvent = useCallback(
+    (event: Event | undefined): ClassifiedEvent | undefined => {
+      if (!event || !model.object_config) {
+        return undefined;
+      }
+
+      const classificationType = model.object_config.classification_type;
+
+      if (classificationType === "attribute") {
+        // For attribute type, look at event.data[model.name]
+        const attributeValue = event.data[model.name] as string | undefined;
+        const attributeScore = event.data[`${model.name}_score`] as
+          | number
+          | undefined;
+
+        if (attributeValue && attributeValue !== "none") {
+          return {
+            id: event.id,
+            label: attributeValue,
+            score: attributeScore,
+          };
+        }
+      } else {
+        // For sub_label type, use event.sub_label
+        if (event.sub_label && event.sub_label !== "none") {
+          return {
+            id: event.id,
+            label: event.sub_label,
+            score: event.data?.sub_label_score,
+          };
+        }
+      }
+
+      return undefined;
+    },
+    [model],
+  );
+
   // selection
 
   const [selectedEvent, setSelectedEvent] = useState<Event>();
@@ -1095,11 +1137,13 @@ function ObjectTrainGrid({
       >
         {Object.entries(groups).map(([key, group]) => {
           const event = events?.find((ev) => ev.id == key);
+          const classifiedEvent = createClassifiedEvent(event);
+
           return (
             <div key={key} className="aspect-square w-full">
               <GroupedClassificationCard
                 group={group}
-                event={event}
+                classifiedEvent={classifiedEvent}
                 threshold={threshold}
                 selectedItems={selectedImages}
                 i18nLibrary="views/classificationModel"

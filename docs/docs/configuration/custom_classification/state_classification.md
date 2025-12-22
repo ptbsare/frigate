@@ -3,13 +3,15 @@ id: state_classification
 title: State Classification
 ---
 
-State classification allows you to train a custom MobileNetV2 classification model on a fixed region of your camera frame(s) to determine a current state. The model can be configured to run on a schedule and/or when motion is detected in that region.
+State classification allows you to train a custom MobileNetV2 classification model on a fixed region of your camera frame(s) to determine a current state. The model can be configured to run on a schedule and/or when motion is detected in that region. Classification results are available through the `frigate/<camera_name>/classification/<model_name>` MQTT topic and in Home Assistant sensors via the official Frigate integration.
 
 ## Minimum System Requirements
 
 State classification models are lightweight and run very fast on CPU. Inference should be usable on virtually any machine that can run Frigate.
 
 Training the model does briefly use a high amount of system resources for about 1–3 minutes per training run. On lower-power devices, training may take longer.
+
+A CPU with AVX instructions is required for training and inference.
 
 ## Classes
 
@@ -45,6 +47,8 @@ classification:
           front:
             crop: [0, 180, 220, 400]
 ```
+
+An optional config, `save_attempts`, can be set as a key under the model name. This defines the number of classification attempts to save in the Recent Classifications tab. For state classification models, the default is 100.
 
 ## Training the model
 
